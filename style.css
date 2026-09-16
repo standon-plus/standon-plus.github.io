@@ -145,17 +145,114 @@ section.part:last-of-type {
 .description {
   color: var(--text);
   max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
+  text-align: left;
 }
 
 .description p {
-  margin: 0 auto;
+  margin: 0;
 }
 
 .placeholder {
   color: var(--muted);
   font-style: italic;
+}
+
+/* ---------- Write-up prose (longer explanatory text) ---------- */
+.prose p {
+  max-width: 100%;
+  text-align: left;
+}
+
+.prose strong {
+  font-weight: 600;
+}
+
+/* ---------- Side-by-side comparison figures ---------- */
+.compare-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 24px;
+  margin: 20px 0 24px;
+}
+
+.compare-row figure {
+  margin: 0;
+  text-align: center;
+}
+
+.compare-row img {
+  height: 280px;
+  width: auto;
+  max-width: 100%;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+}
+
+.compare-row figcaption {
+  margin-top: 8px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+/* ---------- Result thumbnail gallery (image + per-item caption) ---------- */
+.gallery {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 20px;
+  margin: 20px 0 24px;
+}
+
+.gallery figure {
+  margin: 0;
+  width: 210px;
+  text-align: center;
+}
+
+.gallery img {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+}
+
+.gallery figcaption {
+  margin-top: 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.gallery figcaption .filename {
+  display: block;
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Two-column variant: larger images, used for bigger result sets */
+.gallery.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px 20px;
+}
+
+.gallery.gallery-grid figure {
+  width: 100%;
+}
+
+.gallery.gallery-grid img {
+  width: 100%;
+  height: auto;
+}
+
+@media (max-width: 560px) {
+  .gallery.gallery-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 footer {

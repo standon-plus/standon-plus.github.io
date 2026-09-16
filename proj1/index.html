@@ -1,0 +1,148 @@
+<title>Project 1: Colorizing the Prokudin-Gorskii Photo Collection</title>
+<link rel="stylesheet" href="../style.css">
+
+<main>
+  <a class="back-link" href="../index.html">&larr; Back to all projects</a>
+
+  <h1>Project 1: Colorizing the Prokudin-Gorskii Photo Collection</h1>
+
+  <section class="part prose" id="overview">
+    <h2>Overview</h2>
+    <p>In the early 1900s, a Russian chemist and photographer called Sergei Prokudin-Gorskii envisioned a future of color photography. To realize his goal, he traveled around the Russian Empire with special permission from the Tsar Nicholas II, and took thousands of three-filter photographs (one photographic plate per color of RGB). While these photos were rarely rendered in the years afterwards, the Library of Congress' modern digital scans of these plates enable high-quality reproductions of Prokudin-Gorskii's color images. In this project, I will be using rudimentary image processing techniques to create my own reproductions of images in this collection.</p>
+    <p>The general strategy for this algorithm is to align the three photographic plates, assign the pixel values of each plate to a corresponding color channel, and stack them to create a typical (H, W, 3) RGB image. If this is not done correctly, we get an artifact called <strong>Lateral Chromatic Aberration (LCA)</strong>. This is a fancy term for RGB channel misalignment, and it creates an effect where the image seems to have multiple copies, or some fringing artifacts on the edges. Below is an example of two images, where one has LCA.</p>
+    <div class="compare-row">
+      <figure>
+        <img src="images/monastery_raw.jpg" alt="Monastery image with uncorrected RGB channels, showing color fringing">
+        <figcaption>Uncorrected (LCA)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/monastery.jpg" alt="Monastery image with correctly aligned RGB channels">
+        <figcaption>Corrected</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="part prose" id="single-scale">
+    <h2>Single-scale Alignment</h2>
+    <p>A naive way to get aligned images is by holding one channel constant. Then, for each other channel, we search over a pre-determined range of values (say -15 to 15) of shifts in the row and column directions, and choose the transformation that gives the best alignment (compared to the fixed channel). To score the alignment, there's a number of image distance metrics we can choose. One option is the <strong>Euclidean distance (L2 norm)</strong>, which computes the Frobenius norm of the difference between the two images. Another option is the <strong>normalized cross-correlation (NCC)</strong>, which finds the dot product between the normalized, demeaned versions of each image. Coming from a signal processing background, I'll be preferring NCC over L2 since it seems more natural to me.</p>
+    <p>Initially, I calculated my distance metric using as much of the image as possible, only cropping out the parts that wrap around in np.roll. However, this led to misalignment issues in monastery. I found out that this is due to the exterior frame: the border intensity values are quite large (either white and close to 1 or black and close to 0), which messes up the score. Instead, I ensured that I'd only use image pixels by cropping a consistent 10% off of the sides of each image. This greatly helped the LCA effect in monastery.</p>
+    <div class="compare-row">
+      <figure>
+        <img src="images/monastery_lca.jpg" alt="Monastery aligned without border cropping, still showing LCA">
+        <figcaption>Without border cropping</figcaption>
+      </figure>
+      <figure>
+        <img src="images/monastery.jpg" alt="Monastery aligned with 10% border cropping">
+        <figcaption>With 10% border cropping</figcaption>
+      </figure>
+    </div>
+    <p>Overall, below are the results of my algorithm on the cathedral, monastery, and tobolsk images.</p>
+    <div class="gallery">
+      <figure>
+        <img src="images/cathedral.jpg" alt="Aligned cathedral image">
+        <figcaption><span class="filename">cathedral.jpg</span>G: (5, 2), R: (12, 3)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/monastery.jpg" alt="Aligned monastery image">
+        <figcaption><span class="filename">monastery.jpg</span>G: (-3, 2), R: (3, 2)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/tobolsk.jpg" alt="Aligned tobolsk image">
+        <figcaption><span class="filename">tobolsk.jpg</span>G: (3, 3), R: (6, 3)</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="part prose" id="multi-scale">
+    <h2>Multi-scale Alignment</h2>
+    <p>Single assignment seems to work great for small images, but there's a critical problem. Once the image size gets larger, the shift required to align these channels increases&mdash;to around values of plus or minus 100&mdash;in order to search over a similar percentage of the image. Not only does a larger image mean a slower calculation of the NCC, but also we'd have to search over a much wider range of shifts (around 200x200=40000 in total!) This would make the algorithm extremely slow. To combat this effect, we can use the strategy of the image pyramid. Instead of searching explicitly over the whole, large image, we downscale the image until it gets to a reasonable size. Then, we search more exhaustively over this smaller image, save the best shift, and apply an equivalent shift to a slightly upscaled version of the image. As a result, we can search less intensely on the upscaled version, since we know we've gotten in the ballpark estimate with the downscaled image. This process can be done over and over, increasing the image size and decreasing the search window, in order to align any size of image relatively fast.</p>
+    <p>To downscale the images, I used skimage's rescale function as suggested by the starter code. This function implements a Gaussian blur to prevent anti-aliasing before downsampling. Without this blur, finer details in the image would be misrepresented, for example with jagged edges or other unwanted patterns. So, this anti-aliasing ensures that the downscaled image metrics for a certain shift are as close as possible to the respective upscaled image metrics.</p>
+    <p>I implemented an iterative version of the image pyramid-based multiscaling, with editable values of scale factor (I used 0.5), "small enough" image size for the exhaustive search (I used 500x500), and shift ranges (I started with +/- 15 for the exhaustive search, and went with +/- 10 for the other searches). I found that these values gave a good balance of speed while finding accurate shifts where possible with this version of the method. None of the images took longer than 45 seconds to render.</p>
+    <p>Below I have the results of Prokudin-Gorskii's pictures on the included image set that worked well. I also have 3 images selected from the Library of Congress website&mdash;a monument to Peter the Great, a view of the Kharitonov garden, and some poppies.</p>
+    <div class="gallery gallery-grid">
+      <figure>
+        <img src="images/cathedral.jpg" alt="Aligned cathedral image">
+        <figcaption><span class="filename">cathedral.jpg</span>G: (5, 2), R: (12, 3)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/monastery.jpg" alt="Aligned monastery image">
+        <figcaption><span class="filename">monastery.jpg</span>G: (-3, 2), R: (3, 2)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/tobolsk.jpg" alt="Aligned tobolsk image">
+        <figcaption><span class="filename">tobolsk.jpg</span>G: (3, 3), R: (6, 3)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/wharf.jpg" alt="Aligned wharf image">
+        <figcaption><span class="filename">wharf.tif</span>G: (15, -7), R: (83, -16)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/religous_painting.jpg" alt="Aligned religious painting image">
+        <figcaption><span class="filename">religous_painting.tif</span>G: (28, 3), R: (68, 7)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/church.jpg" alt="Aligned church image">
+        <figcaption><span class="filename">church.tif</span>G: (25, 4), R: (58, -4)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/three_generations.jpg" alt="Aligned three generations image">
+        <figcaption><span class="filename">three_generations.tif</span>G: (53, 14), R: (112, 11)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/melons.jpg" alt="Aligned melons image">
+        <figcaption><span class="filename">melons.tif</span>G: (82, 10), R: (178, 13)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/icon.jpg" alt="Aligned icon image">
+        <figcaption><span class="filename">icon.tif</span>G: (41, 17), R: (89, 23)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/siren.jpg" alt="Aligned siren image">
+        <figcaption><span class="filename">siren.tif</span>G: (49, -6), R: (96, -25)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/self_portrait.jpg" alt="Aligned self portrait image">
+        <figcaption><span class="filename">self_portrait.tif</span>G: (79, 29), R: (176, 37)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/harvesters.jpg" alt="Aligned harvesters image">
+        <figcaption><span class="filename">harvesters.tif</span>G: (60, 17), R: (124, 13)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/ilemselga.jpg" alt="Aligned ilemselga image">
+        <figcaption><span class="filename">ilemselga.tif</span>G: (40, 7), R: (130, 11)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/double_poppies.jpg" alt="Aligned poppies image">
+        <figcaption><span class="filename">double_poppies.tif</span>G: (8, 8), R: (60, 13)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/garden.jpg" alt="Aligned Kharitonov garden image">
+        <figcaption><span class="filename">garden.tif</span>G: (52, -1), R: (114, -15)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/monument.jpg" alt="Aligned monument to Peter the Great image">
+        <figcaption><span class="filename">monument.tif</span>G: (14, 27), R: (85, 50)</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="part prose" id="failure-modes">
+    <h2>Failure Modes</h2>
+    <p>In some of the images (specifically the Emir of Bukhara), I ended up failing the alignment. Although the alignment is relatively close, there is still clear LCA. I believe this is because of the large differences in brightness between channels. For example, the blue robe the emir has very different visible features and overall intensity in the blue channel compared to its features in the green or red channels. This would mean the NCC gives a nonrepresentative view of whether or not the two channels are truly aligned.</p>
+    <div class="compare-row">
+      <figure>
+        <img src="images/emir.jpg" alt="Misaligned emir of Bukhara image, showing visible LCA">
+        <figcaption>Misaligned result (G: (49, 24), R: (104, 56))</figcaption>
+      </figure>
+      <figure>
+        <img src="images/emir_plates.jpg" alt="Original R, G, B glass plate negatives for the emir photo">
+        <figcaption>Original R/G/B plates</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <footer>
+    <p><a href="../index.html">&larr; Back to all projects</a></p>
+  </footer>
+</main>
