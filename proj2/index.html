@@ -1,0 +1,333 @@
+<title>Project 2: Fun with Filters and Frequencies</title>
+<link rel="stylesheet" href="../style.css">
+
+<main>
+  <a class="back-link" href="../index.html">&larr; Back to all projects</a>
+
+  <h1>Project 2: Fun with Filters and Frequencies</h1>
+
+  <section class="part prose" id="overview">
+    <h2>Overview</h2>
+    <p>In this project, I'll be using convolution and traditional image processing methods to do some cool things with images, like finding edges, creating hybrid images, and blending 2 images together!</p>
+  </section>
+
+  <section class="part prose" id="part1">
+    <h2>Part 1: Fun with Filters</h2>
+
+    <h3>Convolutions from Scratch</h3>
+    <p>Convolution is one of the essential operations I'll be needing for the rest of this project, so it'll help my understanding to implement convolution on images from scratch. I implemented it with both a 4-loop (iterating over the image and then the filter, then adding to the result) and a 2-loop (iterating over just the image itself and doing a dot product between the image and kernel at that point).</p>
+    <p>Following the lead of scipy.signal.convolve2d, I also implemented the 'same', 'full', and 'valid' options. To do this, I added enough padding to the image (adding 0s) before convolving so that I calculated every time the filter overlapped at least 1 pixel with the image. Then, I got rid of the parts I wouldn't need to include in the 'same' and 'valid' versions of the convolution. However, by default I keep the 'full' level of padding. This implementation allowed me to reuse the maximum amount of code, since I just had an if statement telling me how much I needed to slice out after the main computation is completed.</p>
+    <p>Here are my implementations:</p>
+    <pre class="code-block"><code>def convolve_4loops(in1, in2, mode='full'):
+    m, n = in1.shape
+    u, v = in2.shape
+
+    assert u &lt; m and v &lt; n, "Ensure kernel is the second input"
+
+    in2 = in2[::-1, ::-1]
+
+    # Make out array and add padding to in1
+    pad_x = (u - 1) // 2
+    pad_y = (v - 1) // 2
+    out = np.zeros((m + u - 1, n + v - 1))
+    in1 = np.pad(in1, ((u - 1, u - 1), (v - 1, v - 1)))
+
+    for i in np.arange(out.shape[0]):
+        for j in np.arange(out.shape[1]):
+            for x in np.arange(u):
+                for y in np.arange(v):
+                    out[i, j] += in1[i + x, j + y] * in2[x, y]
+
+    if mode == 'valid':
+        out = out[u - 1:-(u - 1), v - 1:-(v - 1)]
+    elif mode == 'same':
+        rem_x = u - 1 - pad_x
+        rem_y = v - 1 - pad_y
+        out = out[pad_x:-rem_x, pad_y:-rem_y]
+    return out
+
+def convolve_2loops(in1, in2, mode='full', boundary='fill', fillvalue=0):
+    m, n = in1.shape
+    u, v = in2.shape
+
+    assert u &lt; m and v &lt; n, "Ensure kernel is the second input"
+
+    in2 = in2[::-1, ::-1]
+
+    # Make out array and add padding to in1
+    pad_x = (u - 1) // 2
+    pad_y = (v - 1) // 2
+    out = np.zeros((m + u - 1, n + v - 1))
+    in1 = np.pad(in1, ((u - 1, u - 1), (v - 1, v - 1)))
+
+    for i in np.arange(out.shape[0]):
+        for j in np.arange(out.shape[1]):
+            sub = in1[i:i + u, j:j + v]
+            out[i, j] = np.sum(sub * in2)
+
+    if mode == 'valid':
+        out = out[u - 1:-(u - 1), v - 1:-(v - 1)]
+    elif mode == 'same':
+        rem_x = u - 1 - pad_x
+        rem_y = v - 1 - pad_y
+        out = out[pad_x:-rem_x, pad_y:-rem_y]
+    return out</code></pre>
+    <p>Since Python loops are inefficient compared to the sped-up, C-based versions in NumPy or SciPy, my implementations were clearly much slower than the official implementation. On the image below, which is 1200x1600, my 4-loop implementation took 12 seconds. However, since I take some advantage of NumPy's parallelization in my 2-loop implementation, this version is faster and takes about 5 seconds. Of course, the optimized, official implementation takes less than 0.1 seconds to run. Here's a visualization of a few different filters on my image with my implementation and SciPy's:</p>
+    <div class="table-scroll">
+      <table class="filter-table">
+        <thead>
+          <tr>
+            <th></th>
+            <th>My Implementation</th>
+            <th>SciPy Implementation</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="row-label">dx</td>
+            <td><img src="images/out/1.1/sahir_dx.png" alt="Dx filter applied with my convolution implementation"></td>
+            <td><img src="images/out/1.1/sahir_dx_scipy.png" alt="Dx filter applied with scipy.signal.convolve2d"></td>
+          </tr>
+          <tr>
+            <td class="row-label">dy</td>
+            <td><img src="images/out/1.1/sahir_dy.png" alt="Dy filter applied with my convolution implementation"></td>
+            <td><img src="images/out/1.1/sahir_dy_scipy.png" alt="Dy filter applied with scipy.signal.convolve2d"></td>
+          </tr>
+          <tr>
+            <td class="row-label">box</td>
+            <td><img src="images/out/1.1/sahir_box.png" alt="Box filter applied with my convolution implementation"></td>
+            <td><img src="images/out/1.1/sahir_box_scipy.png" alt="Box filter applied with scipy.signal.convolve2d"></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Finite Difference Operators</h3>
+    <p>Let's use convolution to detect edges now! We can create the finite partial derivative operators Dx=[1, 0, -1] and Dy=Dx.T, which give us vertical and horizontal edges respectively. However, these two filters only get us directional edges. What if we want to highlight edges of any direction equally? To get around this, we combine the results of these 2 in quadrature to get a "gradient magnitude" image, which is essentially a general edge detector &mdash; edges of any direction will return a positive result.</p>
+    <p>Now I'll use a threshold on this gradient magnitude image to determine what's a "sharp enough" edge. Empirically, after some tweaking, I found a good level for this threshold is <strong>0.25</strong>. To get my threshold, I was looking for full coverage of the man and his camera where possible &mdash; the "edges" detected from the grass was noise in my eyes, and I wanted to minimize the random speckle in the final edge detector. Here's what all this looks like:</p>
+    <div class="gallery">
+      <figure>
+        <img src="images/out/1.2/cameraman_dx.png" alt="Cameraman image convolved with the Dx operator">
+        <figcaption>Vertical edge</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/1.2/cameraman_dy.png" alt="Cameraman image convolved with the Dy operator">
+        <figcaption>Horizontal edge</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/1.2/cameraman_edges.png" alt="Cameraman gradient magnitude image">
+        <figcaption>Full edge</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/1.2/cameraman_edges_threshold.png" alt="Cameraman gradient magnitude image after thresholding at 0.25">
+        <figcaption>Edge thresholded (0.25)</figcaption>
+      </figure>
+    </div>
+
+    <h3>Derivative of Gaussian Filter</h3>
+    <p>Using this raw method to find edges, I saw a lot of noisy detections from the grass, etc. These are high-frequency features, so if we get rid of some of these, could we get a more robust edge detector? Let's use a Gaussian filter to do this! The Gaussian filter is similar to a box filter in that it acts as a low-pass filter and gets rid of higher frequencies in the image. Here's an example:</p>
+    <div class="compare-row kernels">
+      <figure>
+        <img src="images/out/1.3/gaussian.png" alt="Gaussian filter kernel">
+        <figcaption>Gaussian filter</figcaption>
+      </figure>
+    </div>
+    <p>We can tweak the cutoff frequency by modifying the standard deviation, sigma, of the distribution, which we'll utilize in later parts. A higher sigma blurs the image more than a smaller sigma. Intuitively, this makes sense since a Gaussian distribution with small enough sigma essentially gives back a delta function/identity. If we blur the image before trying to detect images like above, we can see more success without having to worry as much about noise in the result. To reflect this, it turns out we can have a lower threshold to get a similar edge result &mdash; in this case, about <strong>0.15</strong> sufficed.</p>
+    <div class="gallery">
+      <figure>
+        <img src="images/out/1.3/cameraman_edges_trad.png" alt="Cameraman edges after Gaussian blurring then applying the finite difference operators">
+        <figcaption>Full edge (blur then derivative)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/1.3/cameraman_edges_trad_threshold.png" alt="Cameraman edges after Gaussian blurring, thresholded at 0.15">
+        <figcaption>Edge thresholded (0.15)</figcaption>
+      </figure>
+    </div>
+    <p>It turns out that instead of doing a blur then finding the edges afterwards, we can convolve the Gaussian filter with our edge detector directly to give us a more robust edge detector all in one shot. This new filter is called the derivative of Gaussian (DoG) filter, and here's what it looks like!</p>
+    <div class="compare-row kernels">
+      <figure>
+        <img src="images/out/1.3/dog_x.png" alt="Derivative of Gaussian filter in the x direction">
+        <figcaption>DoG<sub>x</sub></figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/1.3/dog_y.png" alt="Derivative of Gaussian filter in the y direction">
+        <figcaption>DoG<sub>y</sub></figcaption>
+      </figure>
+    </div>
+    <p>If we use these DoG filters to create our robust edge detector, it ends up looking exactly the same (as we expected). You can also see how this method lets us gets rid of a lot of the noise from our naive edge detector using the raw finite difference operators.</p>
+    <div class="gallery">
+      <figure>
+        <img src="images/out/1.3/cameraman_edges_dog.png" alt="Cameraman edges using the derivative of Gaussian filter directly">
+        <figcaption>Full edge (DoG)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/1.3/cameraman_edges_dog_threshold.png" alt="Cameraman edges using the derivative of Gaussian filter, thresholded">
+        <figcaption>Edge thresholded (DoG, 0.15)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/1.2/cameraman_edges.png" alt="Cameraman edges using the raw finite difference operators, for comparison">
+        <figcaption>Full edge (raw, no blur)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/1.2/cameraman_edges_threshold.png" alt="Cameraman edges using the raw finite difference operators, thresholded, for comparison">
+        <figcaption>Edge thresholded (raw, 0.25)</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="part prose" id="part2">
+    <h2>Part 2: Fun with Frequencies</h2>
+
+    <h3>Image Sharpening</h3>
+    <p>Let's try to sharpen some images! I'll be doing these using the "unsharp" filter, which is a misnomer.</p>
+    <p>To make the filter, we first need to extract out some high-frequency information from the image. We can do this by subtracting the original image with a Gaussian blurred version of the original filter. Intuitively, since the Gaussian blur is a low-pass filter, the remainder acts like a high pass filter. Then, we can add some of these high-frequency features back into the image. To formalize this, the full unsharp filter is in the form 1 + a(1 - G) = (1 + a) - aG, where G is the Gaussian filter, 1 is the identity, and a is the sharpening factor. Here's what it looks like for the Taj Mahal image:</p>
+    <div class="gallery">
+      <figure>
+        <img src="images/taj.jpg" alt="Original Taj Mahal image">
+        <figcaption>Original</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/2.1/taj_sharpened_alpha_1.png" alt="Taj Mahal image sharpened with alpha 1">
+        <figcaption>&alpha; = 1</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/2.1/taj_sharpened_alpha_4.png" alt="Taj Mahal image sharpened with alpha 4">
+        <figcaption>&alpha; = 4</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/2.1/taj_sharpened_alpha_10.png" alt="Taj Mahal image sharpened with alpha 10">
+        <figcaption>&alpha; = 10</figcaption>
+      </figure>
+    </div>
+    <p>I also used my own image, blurred it, then sharpened it again using the unsharp filter. Here's what it looks like:</p>
+    <div class="gallery">
+      <figure>
+        <img src="images/sahir.jpg" alt="Original sharp photo of Sahir">
+        <figcaption>Original (sharp)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/2.1/sahir_blurred.png" alt="Photo of Sahir after Gaussian blurring">
+        <figcaption>Blurred</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/2.1/sahir_sharpened_alpha_1.png" alt="Blurred photo of Sahir re-sharpened with alpha 1">
+        <figcaption>Re-sharpened, &alpha; = 1</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/2.1/sahir_sharpened_alpha_4.png" alt="Blurred photo of Sahir re-sharpened with alpha 4">
+        <figcaption>Re-sharpened, &alpha; = 4</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/2.1/sahir_sharpened_alpha_10.png" alt="Blurred photo of Sahir re-sharpened with alpha 10">
+        <figcaption>Re-sharpened, &alpha; = 10</figcaption>
+      </figure>
+    </div>
+    <p>You can see that higher alpha values lead to larger sharpening. In the Taj photo, you can see that edges around the gate and on the edges of the Taj Mahal gets blown out more and more as the alpha value increases. When trying to re-create my original sharp image using the unsharp filter, results are varied. For too low of an alpha, the image still seems blurred, and for too high of an alpha, the image looks extremely blown out (e.g. the rocks have very sharp transition with the grass). In all cases, the sharp, non-blurred image looks the best, because low-pass filtering inherently gets rid of some information about the image that cannot be brought back.</p>
+
+    <h3>Hybrid Images</h3>
+    <p>Let's create some hybrid images! These images look like one image up close, but look like another image from far away. We can do this by exploiting low frequencies and high frequencies. Since from far away, low frequencies dominate, and vice versa from up close, we can low-pass (Gaussian filter) one image and high-pass (identity minus Gaussian filter) the other, then add them together to get a hybrid image. The trick mainly here is to align the general features of each image so each side looks relatively plausible. To do this, I used pre-written code to align images by selecting 2 points on each image that should line up. Afterwards, I did some post-processing by trimming the images so that the black edges didn't show (or didn't show as much as realistically possible). I also had to introduce a scaling factor that I called alpha, since some high-frequency details were stronger than others. I'll note the alpha values I used as I go.</p>
+    <p>For the cutoff frequency, I used differing values of sigma in the Gaussian filter: 5 for the low-pass and 2 for the high-pass. Since sigma=5 is a quite strong low-pass filter, while sigma=2 means my high-pass filter is getting rid of some relatively high frequencies, I end up filtering out a middle section of the frequencies of both images. This makes for a better hybrid image since the distinction between the far image and the close image is more readily visible/has less transition.</p>
+    <p>Here's some example images:</p>
+    <div class="compare-row">
+      <figure>
+        <img src="images/aligned/derek.png" alt="Aligned photo of Derek">
+        <figcaption>Derek</figcaption>
+      </figure>
+      <figure>
+        <img src="images/aligned/nutmeg.png" alt="Aligned photo of Nutmeg the cat">
+        <figcaption>Nutmeg</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/2.2/dermeg.png" alt="Hybrid image of Derek and Nutmeg">
+        <figcaption>Hybrid (&alpha; = 0.1)</figcaption>
+      </figure>
+    </div>
+    <div class="compare-row">
+      <figure>
+        <img src="images/aligned/pumpkin.png" alt="Aligned photo of a pumpkin">
+        <figcaption>Pumpkin</figcaption>
+      </figure>
+      <figure>
+        <img src="images/aligned/basketball.png" alt="Aligned photo of a basketball">
+        <figcaption>Basketball</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/2.2/pumpetball.png" alt="Hybrid image of a pumpkin and a basketball">
+        <figcaption>Hybrid (&alpha; = 0.1)</figcaption>
+      </figure>
+    </div>
+    <div class="compare-row">
+      <figure>
+        <img src="images/aligned/sad.png" alt="Aligned photo of a sad face">
+        <figcaption>Sad</figcaption>
+      </figure>
+      <figure>
+        <img src="images/aligned/happy.png" alt="Aligned photo of a happy face">
+        <figcaption>Happy</figcaption>
+      </figure>
+      <figure>
+        <img src="images/out/2.2/sappy.png" alt="Hybrid image of a sad and happy face">
+        <figcaption>Hybrid (&alpha; = 0.6)</figcaption>
+      </figure>
+    </div>
+    <p>And some more detail about how the process looks like for the sad/happy image:</p>
+    <div class="figure-full">
+      <img src="images/out/2.2/sappy_ffts.png" alt="Fourier transform magnitudes for the sad image, happy image, their filtered versions, and the resulting hybrid">
+    </div>
+
+    <h3>Gaussian and Laplacian Stacks</h3>
+    <p>For the next part of this project, I'll be doing multi-resolution blending, but first I need to introduce the idea of a Gaussian and Laplacian stack. Intuitively, the Gaussian stack represents increasingly lower and lower-pass filtering, with different cutoff frequencies. As you go down the stack, the cutoff frequency should get lower and lower, and represent only low-frequency features. The Laplacian stack is the difference between two consecutive layers of the Gaussian stack. Due to the Gaussian stack's construction, the Laplacian stack actually represents a band-pass filter! At each level of the Laplacian stack, we only keep frequencies within a certain range, depending on how your cutoff frequency changes between stacks. The last layer of the Laplacian stack generally keeps the last layer of the Gaussian stack (absolute lowest-frequency features), so that a sum across the layers of a Laplacian stack will give back the original image.</p>
+    <p>For this implementation, it turns out we need a Laplacian stack with roughly an octave (doubling) of frequencies within a stack. To keep slightly more detail than this and get better empirical image quality, I use a Gaussian stack that exponentially decreases in cutoff frequency by the square root of 2 (about 1.414) each layer.</p>
+
+    <h3>Multi-Resolution Blending</h3>
+    <p>Now let's implement multi-resolution blending! For this, we'll need a mask which tells us when we want image 1 and when we want image 2. Then we construct a Laplacian stack of the blended image. At each level, we use the Gaussian stack level of the mask, and add together the Laplacian stack levels of the 2 individual images. Then, to form the final blended image, I sum the elements of the Laplacian stack.</p>
+    <p>Let's see how this looks on the traditional oraple:</p>
+    <div class="figure-full">
+      <img src="images/out/2.4/oraple_pyramid_plots.png" alt="Gaussian and Laplacian stack visualization for the orange/apple blend">
+    </div>
+    <p>I also used the same techniques to blend together old and new pictures of the Tower of London, as well as a pumpkin being thrown into a basketball hoop. Here's those visualizations:</p>
+    <div class="figure-full">
+      <img src="images/out/2.4/tower_pyramid_plots.png" alt="Gaussian and Laplacian stack visualization for the Tower of London blend">
+    </div>
+    <div class="figure-full">
+      <img src="images/out/2.4/pumpkin_pyramid_plots.png" alt="Gaussian and Laplacian stack visualization for the pumpkin/basketball hoop blend">
+    </div>
+    <p>And everything together, alongside the two source images that went into each blend:</p>
+    <div class="table-scroll">
+      <table class="filter-table">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Image 1</th>
+            <th>Image 2</th>
+            <th>Blended</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="row-label">Oraple</td>
+            <td><img src="images/orange.jpg" alt="Source photo of an orange"></td>
+            <td><img src="images/apple.jpg" alt="Source photo of an apple"></td>
+            <td><img src="images/out/2.4/oraple.png" alt="Final blended orange and apple image"></td>
+          </tr>
+          <tr>
+            <td class="row-label">Tower of London</td>
+            <td><img src="images/tower_old.png" alt="Old photo of the Tower of London"></td>
+            <td><img src="images/tower_new.png" alt="New photo of the Tower of London"></td>
+            <td><img src="images/out/2.4/tower_time.png" alt="Final blended old and new Tower of London image"></td>
+          </tr>
+          <tr>
+            <td class="row-label">Pumpkin + hoop</td>
+            <td><img src="images/pumpkin_ballhoop.png" alt="Source photo of a pumpkin, aligned to the basketball hoop"></td>
+            <td><img src="images/ballhoop.png" alt="Source photo of a basketball hoop"></td>
+            <td><img src="images/out/2.4/pumpkin.png" alt="Final blended pumpkin and basketball hoop image"></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p><a href="../index.html">&larr; Back to all projects</a></p>
+  </footer>
+</main>
