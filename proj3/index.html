@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <title>Project 3: Fun with Flow Models</title>
 <link rel="stylesheet" href="../style.css">
 
@@ -99,23 +100,21 @@
 
     <h4>Visualizing Velocity</h4>
     <p>Now, let's see what the model is actually trying to add with this one-step denoising setup. We know from equation A2 that \((1-t)v_{\theta}(x_t,t,c)=x_1-x_t\), so I'll be comparing the output of PixNerd with this ground truth velocity field, and recording the root-mean-square difference at each pixel. The heatmap should show where our model is incorrect in its predictions, and thus where the one-step denoising process went wrong.</p>
-    <div class="compare-grid">
-      <figure>
-        <img src="images/parta/a1-tractor-original.png" alt="Original tractor image, for reference">
-        <figcaption>original</figcaption>
-      </figure>
-      <figure>
-        <img src="images/parta/a1-velocity-t0.25.png" alt="Predicted vs. ground-truth velocity and error map at t=0.25">
-        <figcaption>t = 0.25</figcaption>
-      </figure>
-      <figure>
-        <img src="images/parta/a1-velocity-t0.50.png" alt="Predicted vs. ground-truth velocity and error map at t=0.50">
-        <figcaption>t = 0.50</figcaption>
-      </figure>
-      <figure>
-        <img src="images/parta/a1-velocity-t0.75.png" alt="Predicted vs. ground-truth velocity and error map at t=0.75">
-        <figcaption>t = 0.75</figcaption>
-      </figure>
+    <div class="single-figure">
+      <img src="images/parta/a1-tractor-original.png" alt="Original tractor image, for reference">
+      <figcaption>original</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/parta/a1-velocity-t0.25.png" alt="Predicted vs. ground-truth velocity and error map at t=0.25">
+      <figcaption>t = 0.25</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/parta/a1-velocity-t0.50.png" alt="Predicted vs. ground-truth velocity and error map at t=0.50">
+      <figcaption>t = 0.50</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/parta/a1-velocity-t0.75.png" alt="Predicted vs. ground-truth velocity and error map at t=0.75">
+      <figcaption>t = 0.75</figcaption>
     </div>
 
     <h4>Iterative Denoising with Euler Sampling</h4>
