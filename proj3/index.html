@@ -1,0 +1,469 @@
+<title>Project 3: Fun with Flow Models</title>
+<link rel="stylesheet" href="../style.css">
+
+<link rel="stylesheet" href="../vendor/katex/katex.min.css">
+<script src="../vendor/katex/katex.min.js"></script>
+<script src="../vendor/katex/auto-render.min.js"></script>
+
+<main>
+  <a class="back-link" href="../index.html">&larr; Back to all projects</a>
+
+  <h1>Project 3: Fun with Flow Models</h1>
+  <p class="subtitle">By Sahir Tandon</p>
+
+  <section class="part prose" id="overview">
+    <h2>Overview</h2>
+    <p>In this project, we'll be exploring flow matching models, which allow us to generate and edit images! I'll first be investigating how these models work using PixNerd, a pre-trained flow matching model, and then I'll be building my own model based on a U-Net and training it to generate numbers using MNIST.</p>
+  </section>
+
+  <section class="part prose" id="parta">
+    <h2>Part A: Exploring the Power of Flow Models</h2>
+
+    <p>In this part, I won't be training my own model yet. Instead, I'll be using a pretrained text-to-image model called PixNerd, and creating 512&times;512 images.</p>
+    <p>PixNerd can't directly take in text, however! We need to convert the text inputs into embeddings first. To do this, I'll be using a pretrained language model based on Qwen3. This language model will take the actual text inputs, transform them into embeddings, and then feed those embeddings into PixNerd to generate images. This ensures that PixNerd doesn't have to worry about understanding language, and can act purely as a good representation of a flow field onto the manifold of natural images.</p>
+
+    <h3 id="a1">1. Visualizing Training and Sampling</h3>
+
+    <p>Before we apply the flow matching model, it's good to understand what the model is trying to approximate. In the optimal transport flow-matching formulation, we attempt to match randomly-generated images (typically Gaussian noise) onto the manifold (or the reasonable subset) of "natural" images. We pair up a random image, \(x_0\), and an image on our natural image manifold, \(x_1\), using simple linear interpolation. Formalized, this looks like:</p>
+    <div class="equation">
+      <div class="eq-body">\[ x_t = (1-t)x_0+tx_1, \quad x_0 = \epsilon \sim \mathcal{N}(0, I), \quad t\in [0,1] \]</div>
+      <div class="eq-num">(A1)</div>
+    </div>
+    <p>If you plug in \(t=0\) and \(t=1\), you can recover \(x_0\) and \(x_1\) directly, but now we also have a continuum of images that lie somewhere between the noise and our true image. To get from one instance to the other, we can find the velocity between the two. The flow matching model actually predicts this velocity:</p>
+    <div class="equation">
+      <div class="eq-body">\[ \frac{dx_t}{dt} = x_1 - x_0 = \frac{x_1 - x_t}{1 - t} \sim v_{\theta}(x_t, t, c) \]</div>
+      <div class="eq-num">(A2)</div>
+    </div>
+    <p>The \(c\) term in \(v_{\theta}\) is our condition, and it allows us to generate images of a specific type, e.g. faces, flowers, etc. In PixNerd, the conditioning will be the embedding vectors generated from our text input and Qwen3. We train the model using a simple L2 loss:</p>
+    <div class="equation">
+      <div class="eq-body">\[ \mathcal{L}(\theta) = \left\| v_{\theta}(x_t, t, c) - (x_1-x_0) \right\|_2^2 \]</div>
+      <div class="eq-num">(A3)</div>
+    </div>
+    <p>Each pair of \(x_0\) and \(x_1\) is a straight path, but the actual trajectories that we create are usually curved since our predicted velocities change significantly depending on the condition, current image, and timestep. So, we use Euler integration over a series of smaller timesteps between 0 and 1, recomputing the velocity each time to get a more accurate trajectory.</p>
+    <p>I'll be using my own image of the tipped over tractor from Cars for these tests!</p>
+    <div class="single-figure">
+      <img src="images/parta/a1-tractor-original.png" alt="Original photo of a toy tractor tipped over in a field at night, used as the test image throughout Part A">
+      <figcaption>My source image for Part A &mdash; a (literally) tipped-over tractor.</figcaption>
+    </div>
+
+    <h4>Constructing Noisy Training Inputs</h4>
+    <p>Below, I'm using equation A1 to visualize what different \(x_t\) look like for different times. These kinds of images are what the model would see while training and sampling.</p>
+    <div class="figure-full">
+      <img src="images/parta/a1-noisy-training-inputs.png" alt="Original tractor image alongside noisy interpolations at t=0.25, 0.5, and 0.75">
+      <figcaption>The original image interpolated with Gaussian noise at \(t \in \{0.25, 0.5, 0.75\}\) via equation A1. Lower \(t\) means more noise.</figcaption>
+    </div>
+
+    <h4>Classical Denoising</h4>
+    <p>Before we move to the flow model, let's try some classical denoising methods. We can rearrange equation A1 to get our current image as a noised version of the desired image, which would allow us to use a low-pass filter to approximate what the original would look like.</p>
+    <div class="equation">
+      <div class="eq-body">\[ \frac{x_t}{t}=x_1+\frac{1-t}{t}\epsilon, \qquad \hat{x}_1^{\text{blur}}=G_\sigma\!\left(\frac{x_t}{t}\right) \]</div>
+      <div class="eq-num">(A4)</div>
+    </div>
+    <p>Below, I've shown the results of this denoising with different noise levels. I chose the sigma values for the Gaussian blur from a predetermined selection of [1, 2, 4, 8, 16] and selected the one with the lowest mean squared error.</p>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/parta/a1-classical-denoise-t0.25.png" alt="Classical Gaussian-blur denoising at t=0.25">
+        <figcaption>t = 0.25</figcaption>
+      </figure>
+      <figure>
+        <img src="images/parta/a1-classical-denoise-t0.50.png" alt="Classical Gaussian-blur denoising at t=0.50">
+        <figcaption>t = 0.50</figcaption>
+      </figure>
+      <figure>
+        <img src="images/parta/a1-classical-denoise-t0.75.png" alt="Classical Gaussian-blur denoising at t=0.75">
+        <figcaption>t = 0.75</figcaption>
+      </figure>
+    </div>
+
+    <h4>One-Step Denoising</h4>
+    <p>Now, let's use the flow model! We're going to use a naive approach here, and not use Euler integration to denoise yet. First, we're going to use the linear interpolation again, but with the output of PixNerd:</p>
+    <div class="equation">
+      <div class="eq-body">\[ \hat{x}_1 = x_t + (1-t)v_{\theta}(x_t,t,c) \]</div>
+      <div class="eq-num">(A5)</div>
+    </div>
+    <p>Below are the results of this denoising method, with the same noise levels as before.</p>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/parta/a1-one-step-denoise-t0.25.png" alt="One-step flow model denoising at t=0.25">
+        <figcaption>t = 0.25</figcaption>
+      </figure>
+      <figure>
+        <img src="images/parta/a1-one-step-denoise-t0.50.png" alt="One-step flow model denoising at t=0.50">
+        <figcaption>t = 0.50</figcaption>
+      </figure>
+      <figure>
+        <img src="images/parta/a1-one-step-denoise-t0.75.png" alt="One-step flow model denoising at t=0.75">
+        <figcaption>t = 0.75</figcaption>
+      </figure>
+    </div>
+
+    <h4>Visualizing Velocity</h4>
+    <p>Now, let's see what the model is actually trying to add with this one-step denoising setup. We know from equation A2 that \((1-t)v_{\theta}(x_t,t,c)=x_1-x_t\), so I'll be comparing the output of PixNerd with this ground truth velocity field, and recording the root-mean-square difference at each pixel. The heatmap should show where our model is incorrect in its predictions, and thus where the one-step denoising process went wrong.</p>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/parta/a1-tractor-original.png" alt="Original tractor image, for reference">
+        <figcaption>original</figcaption>
+      </figure>
+      <figure>
+        <img src="images/parta/a1-velocity-t0.25.png" alt="Predicted vs. ground-truth velocity and error map at t=0.25">
+        <figcaption>t = 0.25</figcaption>
+      </figure>
+      <figure>
+        <img src="images/parta/a1-velocity-t0.50.png" alt="Predicted vs. ground-truth velocity and error map at t=0.50">
+        <figcaption>t = 0.50</figcaption>
+      </figure>
+      <figure>
+        <img src="images/parta/a1-velocity-t0.75.png" alt="Predicted vs. ground-truth velocity and error map at t=0.75">
+        <figcaption>t = 0.75</figcaption>
+      </figure>
+    </div>
+
+    <h4>Iterative Denoising with Euler Sampling</h4>
+    <p>Now, let's use Euler integration to improve the generation quality of our samples! Euler integration works by taking a small step, predicting a new velocity, updating our prediction, and repeating:</p>
+    <div class="equation">
+      <div class="eq-body">\[ x_{t+h}=x_t+hv_{\theta}(x_t,t,c) \]</div>
+      <div class="eq-num">(A6)</div>
+    </div>
+    <p>Here, I'm starting at t=0.5 and integrating with step size of 0.02. Here's what that denoising process looks like:</p>
+    <div class="figure-full">
+      <img src="images/parta/a1-euler-trajectory.png" alt="Euler sampling trajectory from t=0.5 to t=1.0, shown every fifth step">
+      <figcaption>Euler sampling trajectory starting at \(t=0.5\), step size \(h=0.02\), shown every fifth step through \(t=1.0\).</figcaption>
+    </div>
+    <p>And here's all of the methods using a start time of 0.5:</p>
+    <div class="figure-full">
+      <img src="images/parta/a1-method-comparison.png" alt="Side-by-side comparison of original, Gaussian blur, one-step denoising, and Euler sampling results, all starting from t=0.5">
+      <figcaption>Original, classical (blur) denoising, one-step denoising, and Euler sampling, all starting from the same \(t=0.5\) noisy input.</figcaption>
+    </div>
+    <p>Clearly, Euler sampling performs the best with this image. Blurring leaves lots of large, ugly artifacts, and one-step denoising leaves some high-frequency features out, but Euler sampling gives a very comparable image.</p>
+
+    <h4>Generating Images from Noise</h4>
+    <p>Before, we've been using PixNerd to denoise one of my own images. But, one of the appealing factors of a flow model is its ability to generate new ones! First, we're going to try simply generating a model from noise using the generic condition "a high quality photo", and see what it creates. To do this, we use the Euler sampling from the previous part, but just start with Gaussian noise and t=0.</p>
+    <div class="figure-full">
+      <img src="images/parta/a1-unconditional-samples.png" alt="Five images generated from pure Gaussian noise with the prompt 'a high quality photo', seeds 180-184">
+      <figcaption>Samples generated from pure noise with prompt "a high quality photo", seeds 180&ndash;184.</figcaption>
+    </div>
+    <p>The unconditional samples seem to prefer human-looking subjects, which reflects that PixNerd must have been trained on many human portraits. Soon, we'll look into how to modify this setup to generate specific classes of images!</p>
+
+    <h3 id="a2">2. Conditional Generation and Guidance</h3>
+    <p>Recall that PixNerd takes in conditioning. Let's exploit this fact to generate specific, higher-quality images!</p>
+
+    <h4>Classifier-Free Guidance</h4>
+    <p>In the previous section, it's pretty obvious that the "high-quality images" aren't super high-quality or accurate to human faces all of the time. We can enforce this conditioning better using classifier-free guidance (CFG)! The idea behind CFG is to separate out our predicted velocity field into an unconditional direction and a conditioning direction. Then, we can choose how much we want to condition our generation, i.e. how much to push it towards following the conditioning versus just making the most general image it can. We do this with the following velocity field:</p>
+    <div class="equation">
+      <div class="eq-body">\[ v_{\text{CFG}}=v_{\text{cond}} + w(v_{\text{cond}} - v_{\text{uncond}}) \]</div>
+      <div class="eq-num">(A7)</div>
+    </div>
+    <p>With this setup for CFG, a higher w means less strong conditioning, and 0 means regular conditional generation. Let's use \(w=7\) for now and all future setups for CFG in this part. Here are some "high quality photo"s using CFG:</p>
+    <div class="figure-full">
+      <img src="images/parta/a2-cfg-samples.png" alt="Five images generated with classifier-free guidance, prompt 'a high quality photo', w=7, seeds 180-184">
+      <figcaption>Samples generated with CFG (\(w=7\)), prompt "a high quality photo", same seeds 180&ndash;184.</figcaption>
+    </div>
+
+    <h3 id="a3">3. Creative Applications</h3>
+
+    <h4>Image-to-Image Editing</h4>
+    <p>We previously noised an image, then used PixNerd to denoise. We can use this method along with CFG to make edits to images! By noising images different amounts then denoising while giving some text to determine what edits should be made, we should be able to successfully edit images. The more we noise the image before this process, the larger the edits can get, since the more leeway we're giving the model to "hallucinate" aspects of the denoised image.</p>
+    <div class="figure-full">
+      <img src="images/parta/a3-edit-campanile.png" alt="SDEdit results on the Campanile photo at starting times t=0.02 through t=0.50, generic prompt">
+      <figcaption>SDEdit on the Campanile, generic prompt "a high quality photo", starting times \(t \in \{0.02, 0.04, 0.06, 0.10, 0.14, 0.25, 0.50\}\).</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/parta/a3-edit-tractor.png" alt="SDEdit results on the tractor photo at starting times t=0.02 through t=0.50, generic prompt">
+      <figcaption>SDEdit on the tractor, same starting times and generic prompt.</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/parta/a3-edit-mcqueen.png" alt="SDEdit results on the Lightning McQueen photo at starting times t=0.02 through t=0.50, generic prompt">
+      <figcaption>SDEdit on a photo of Lightning McQueen, same starting times and generic prompt.</figcaption>
+    </div>
+    <p>My personal favorite for the tractor is at t=0.25, where the model predicts some sort of wrestler doing a crazy pose instead of the tractor. I also think the different car generated at t=0.06 is pretty cool.</p>
+    <p>Where this gets even more cool is when we can put other images onto the manifold of natural objects! Starting from, say, a drawing or logo, we can make edits that make the image look like they came from something in the real world. I drew a duck (inspo from the Duck Song) and a tree at night, and tried this process on both. I also tried editing an image of the Cars logo.</p>
+    <div class="figure-full">
+      <img src="images/parta/a3-edit-duck.png" alt="SDEdit results on a hand-drawn duck wearing a hat, starting times t=0.02 through t=0.50">
+      <figcaption>My hand-drawn duck (yes, drawing this took way too long...), edited at the same seven starting times.</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/parta/a3-edit-tree.png" alt="SDEdit results on a hand-drawn tree at night, starting times t=0.02 through t=0.50">
+      <figcaption>My hand-drawn tree at night, edited at the same seven starting times.</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/parta/a3-edit-cars-logo.png" alt="SDEdit results on the Cars movie logo found online, starting times t=0.02 through t=0.50">
+      <figcaption>The <em>Cars</em> logo (found online), edited at the same seven starting times.</figcaption>
+    </div>
+    <p>At t=0.06 and t=0.10, the duck actually turned into a more 3D shape! And the model predicted my image of a tree as more mushroom-like, seemingly, at t=0.14. It's also interesting how the Cars logo stayed in the same shape at t=0.10 but the name on the logo changed. Aside from these results, the model seemingly collapsed in either direction. At smaller t values, PixNerd devolved into faces again, and at larger ones, the generations were extremely similar to the true images.</p>
+
+    <h4>Text-Guided Image Editing</h4>
+    <p>Now, instead of just generating "high-quality-photo"s, let's design our own edits! By changing the text conditioning during CFG, we can choose what the edits we make should look like. Below I have some examples of the above images with specific edits.</p>
+    <div class="figure-full">
+      <img src="images/parta/a3-text-edit-campanile.png" alt="Text-guided edit of the Campanile with the prompt: a photograph of the Titanic with one of its smokestacks in the middle of frame">
+      <figcaption>Campanile &rarr; prompt: "a photograph of the Titanic with one of its smokestacks in the middle of frame" (baked into the figure title above).</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/parta/a3-text-edit-tractor.png" alt="Text-guided edit of the tractor with the prompt: a photo of a horse laying on its side in a field of grass at night">
+      <figcaption>Tractor &rarr; prompt: "a photo of a horse laying on its side in a field of grass at night".</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/parta/a3-text-edit-mcqueen.png" alt="Text-guided edit of Lightning McQueen with the prompt: a photo of a fire truck on a racetrack with its sirens on">
+      <figcaption>Lightning McQueen &rarr; prompt: "a photo of a fire truck on a racetrack with its sirens on".</figcaption>
+    </div>
+    <p>For the Titanic edit, I prefer t=0.04, since it still keeps some structure from the original (and the middle stripe) but doesn't look too awkward (although t=0.10 looks pretty good too!) For the tractor edit, I really like how realistic t=0.25 looks while still keeping the shape of the original tractor. And I like how the fire truck replaces Lightning McQueen in t=0.06.</p>
+
+    <h4>Visual Anagrams</h4>
+    <p>We can also use this CFG sampling method to generate an optical illusion! This method, called a visual anagram, shows one image when looked at from one direction and another image when flipped upside down. We can use the following algorithm to create a velocity field specifically created to generate these images:</p>
+    <div class="equation">
+      <div class="eq-body">\[ v_1=v_{\text{cfg}}(x_t,t,c_1), \quad v_2=\text{flip}(v_{\text{cfg}}(\text{flip}(x_t),t,c_2)), \quad v = \frac{v_1+v_2}{2} \]</div>
+      <div class="eq-num">(A8)</div>
+    </div>
+    <p>In this case, velocity 1 maps to an image when looked at right side up, and velocity 2 maps onto the manifold of upside down images that follow the second prompt. Here's what this looks like for a few prompts of mine:</p>
+    <div class="figure-full">
+      <img src="images/parta/a3-anagram-apple-campfire.png" alt="Visual anagram: an oil painting of an apple right side up, becomes an oil painting of people at a campfire upside down">
+      <figcaption>Upright: "an oil painting of an apple" &nbsp;|&nbsp; Rotated 180&deg;: "an oil painting of people at a campfire".</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/parta/a3-anagram-turtle-basket.png" alt="Visual anagram: a painting of a turtle swimming right side up, becomes a painting of a wicker basket upside down">
+      <figcaption>Upright: "a painting of a turtle swimming" &nbsp;|&nbsp; Rotated 180&deg;: "a painting of a wicker basket".</figcaption>
+    </div>
+
+    <h4>Hybrid Images</h4>
+    <p>We can use a similar technique of combining different velocity fields to create hybrid images. In this case, we're going to use the low-pass estimate of one prompt and the high-pass estimate of another prompt, then combine. This will get us one image when seen up close, and another image when seen from far away! This technique is very similar to how we generated hybrid images in the previous project, but using flow fields to create images instead.</p>
+    <div class="equation">
+      <div class="eq-body">\[ v_1=v_{\text{cfg}}(x_t,t,c_1), \quad v_2=v_{\text{cfg}}(x_t,t,c_2), \quad v = G_\sigma(v_1) + \left(v_2 - G_\sigma(v_2)\right) \]</div>
+      <div class="eq-num">(A9)</div>
+    </div>
+    <p>Note that in this case G has kernel size 265 and sigma value of 16. Here's this method implemented for a few prompts:</p>
+    <div class="hybrid-row">
+      <figure>
+        <img class="hybrid-large" src="images/parta/a3-hybrid-butterfly-angel.png" alt="Hybrid image, large: looks like an angel with torso and face up close">
+        <figcaption>Up close: "a photograph of an angel<br>with a torso and face"</figcaption>
+      </figure>
+      <figure>
+        <img class="hybrid-small" src="images/parta/a3-hybrid-butterfly-angel.png" alt="Hybrid image, small: looks like a monarch butterfly from far away">
+        <figcaption>From far away:<br>"a photograph of a<br>monarch butterfly"</figcaption>
+      </figure>
+    </div>
+    <div class="hybrid-row">
+      <figure>
+        <img class="hybrid-large" src="images/parta/a3-hybrid-vase-forest.png" alt="Hybrid image, large: looks like a lithograph of a forest up close">
+        <figcaption>Up close: "a lithograph<br>of a forest"</figcaption>
+      </figure>
+      <figure>
+        <img class="hybrid-small" src="images/parta/a3-hybrid-vase-forest.png" alt="Hybrid image, small: looks like a lithograph of a vase from far away">
+        <figcaption>From far away:<br>"a lithograph of a vase"</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="part prose" id="partb">
+    <h2>Part B: Flow Matching from Scratch</h2>
+    <p>In this part, I'll be training my own flow matching model using a U-Net architecture on MNIST! I'll be implementing various forms of conditioning too, like time and class conditioning.</p>
+
+    <h3 id="b1">1. Training a Single-Step Denoising UNet</h3>
+    <p>Before we train a whole model, let's try a similar image-to-image problem to verify that our U-Net works. In this scenario, we input a noisy image, \(z=x+\sigma\epsilon\), and then want the model to predict the denoised image \(x\). Our loss is also L2 as before:</p>
+    <div class="equation">
+      <div class="eq-body">\[ \mathcal{L}(\theta) = \mathbb{E}_{z,x} \left\| D_{\theta}(z) - x \right\|^2 \]</div>
+      <div class="eq-num">(B1)</div>
+    </div>
+
+    <h4>Implementing the UNet</h4>
+    <p>First, we have to implement a U-Net. This is an architecture designed for image-to-image problems, and does a series of convolution layers combined with upsamples and downsamples, so that it outputs an image of the same size as the input. Here's what my U-Net implementation looks like:</p>
+    <figure class="algo-figure">
+      <img src="images/partb/b2-unet-architecture.png" alt="Unconditional UNet architecture diagram: a sequence of ConvBlock, DownBlock, and UpBlock operations with skip connections">
+      <figcaption>Unconditional UNet architecture.</figcaption>
+    </figure>
+
+    <h4>Using the UNet to Train a Denoiser</h4>
+    <p>Now let's train our denoiser! First, let's create data pairs \((x,z)\), where x is the clean image and z is the noised image, according to the equation in the intro of this part. Here's what some noised images z look like:</p>
+    <div class="figure-full">
+      <img src="images/partb/b1-noised-image-viz.png" alt="MNIST digits noised at sigma = 0.0, 0.2, 0.4, 0.5, 0.6, 0.8, 1.0">
+      <figcaption>Digits noised at \(\sigma = [0.0,\ 0.2,\ 0.4,\ 0.5,\ 0.6,\ 0.8,\ 1.0]\) respectively (top to bottom).</figcaption>
+    </div>
+
+    <h5>Training</h5>
+    <p>We'll first denoise with a constant \(\sigma=0.5\) applied to clean images. Here are the hyperparameters I used for training:</p>
+    <table class="hyperparam-table">
+      <tr><th>Batch size</th><td>256</td></tr>
+      <tr><th>Epochs</th><td>5</td></tr>
+      <tr><th>Hidden dim D</th><td>128</td></tr>
+      <tr><th>Optimizer</th><td>Adam</td></tr>
+      <tr><th>Learning rate</th><td>1e-4</td></tr>
+      <tr><th>Noise level &sigma;</th><td>0.5 (fixed)</td></tr>
+    </table>
+    <p>And my loss plot/results:</p>
+    <div class="figure-full narrow">
+      <img src="images/partb/b1-denoiser-loss.png" alt="Denoiser training loss curve over optimizer steps">
+      <figcaption>Denoiser training loss (\(\sigma=0.5\)).</figcaption>
+    </div>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/partb/b1-denoiser-results-epoch1.png" alt="Denoiser results after epoch 1: clean, noisy input, and prediction rows">
+        <figcaption>Epoch 1</figcaption>
+      </figure>
+      <figure>
+        <img src="images/partb/b1-denoiser-results-epoch5.png" alt="Denoiser results after epoch 5: clean, noisy input, and prediction rows">
+        <figcaption>Epoch 5</figcaption>
+      </figure>
+    </div>
+
+    <h5>Out-of-Distribution Testing</h5>
+    <p>Let's now try using our trained model with different noise levels! Here's what attempted denoising looks like with our current U-Net:</p>
+    <div class="figure-full">
+      <img src="images/partb/b1-ood-results.png" alt="Out-of-distribution denoising results across seven noise levels">
+      <figcaption>Out-of-distribution denoising at \(\sigma = [0.0, 0.2, 0.4, 0.5, 0.6, 0.8, 1.0]\), with the model trained only at \(\sigma=0.5\). Each pair of rows shows the noisy input followed by the model's prediction for one \(\sigma\) value, from \(\sigma=0.0\) (top, within the training distribution) down to \(\sigma=1.0\) (bottom, far outside it).</figcaption>
+    </div>
+    <p>As you can see, the denoising process works quite well until getting past a sigma around 0.6. At that point, the amount of noise is larger than the U-Net has been trained to remove, so it performs worse since this test data is out of distribution.</p>
+
+    <h5>Denoising Pure Noise</h5>
+    <p>In Part A, we could use PixNerd to generate images from pure Gaussian noise. Let's try doing this with our traditional denoiser: set \(z=\epsilon\) directly and train with that. Here's my results with that methodology:</p>
+    <div class="figure-full narrow">
+      <img src="images/partb/b1-pure-noise-loss.png" alt="Pure-noise denoiser training loss curve">
+      <figcaption>Training loss when \(z=\epsilon\) directly.</figcaption>
+    </div>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/partb/b1-pure-noise-results-epoch1.png" alt="Pure noise denoiser results after epoch 1">
+        <figcaption>Epoch 1</figcaption>
+      </figure>
+      <figure>
+        <img src="images/partb/b1-pure-noise-results-epoch5.png" alt="Pure noise denoiser results after epoch 5">
+        <figcaption>Epoch 5</figcaption>
+      </figure>
+    </div>
+    <p>As you can see, the loss ends up plateauing at about 0.1 instead of near 0, and all the generated images show a blurred, unclassifiable image. In effect, the U-Net just learned to always output the mean of the distribution of numbers. Since the input noise has effectively no important information that would help determine which number the model must generate, the model learns to ignore the input and just produce what constant output will minimize the L2 loss. In this case, this refers to the mean of all images in the dataset.</p>
+
+    <h3 id="b2">2. Training a Flow Matching Model</h3>
+    <p>From the previous part, it's pretty clear that there are significant issues in using a pure denoiser to generate images or denoise existing images. Instead, we can use the optimal transport flow matching formulation from equations A1 through A3. We'll be training the U-Net to predict the velocity field as described in those equations above, and using an L2 loss.</p>
+
+    <h4>Adding Time Conditioning to UNet</h4>
+    <p>Recall that \(v_{\theta}\) in equation A2 depends on the timestep. So, we should modify our U-Net to condition on time as well! Below is how I modified the architecture to allow for time conditioning:</p>
+    <figure class="algo-figure">
+      <img src="images/partb/b2-unet-conditioned-architecture.png" alt="Time-conditioned UNet architecture diagram, with an FCBlock injecting the time embedding, highlighted in red">
+      <figcaption>Conditioned UNet architecture. The red box highlights the FCBlock conditioning path that injects \(t\) (and later, class \(c\)) into the bottleneck and second-to-last upsampling stage.</figcaption>
+    </figure>
+    <p>We embed the time conditioning by adding a linear layer, inputting time, then multiplying intermediate feature maps of our U-Net with this time vector.</p>
+
+    <h4>Training the UNet</h4>
+    <p>Training is a little bit more complex than the denoiser, but not much more so! All we do at each iteration is pick a random timestep, add noise to get \(x_t\), then train the denoiser to predict the flow. Below is what the algorithm looks like, the hyperparameters I used for training, and the final loss plot:</p>
+    <table class="hyperparam-table">
+      <tr><th>Batch size</th><td>64</td></tr>
+      <tr><th>Epochs</th><td>10</td></tr>
+      <tr><th>Hidden dim D</th><td>128</td></tr>
+      <tr><th>Optimizer</th><td>Adam</td></tr>
+      <tr><th>Initial learning rate</th><td>1e-2</td></tr>
+      <tr><th>LR scheduler</th><td>ExponentialLR, &gamma; = 0.1<sup>1/10</sup> &asymp; 0.794, stepped every epoch</td></tr>
+    </table>
+    <figure class="algo-figure narrow">
+      <img src="images/partb/b2-algorithm-time-training.png" alt="Algorithm B1: training time-conditioned UNet pseudocode">
+      <figcaption>Algorithm B1. Training time-conditioned UNet</figcaption>
+    </figure>
+    <div class="figure-full narrow">
+      <img src="images/partb/b2-time-conditioned-loss.png" alt="Time-conditioned flow matching training loss curve">
+      <figcaption>Time-conditioned FM training loss.</figcaption>
+    </div>
+
+    <h4>Sampling from the UNet</h4>
+    <p>Now, we can use equation A6 to Euler sample from this U-Net and generate new numbers! Here's what this looks like across the training run:</p>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/partb/b2-time-conditioned-epoch1.png" alt="Time-conditioned sampling results after epoch 1">
+        <figcaption>Epoch 1</figcaption>
+      </figure>
+      <figure>
+        <img src="images/partb/b2-time-conditioned-epoch5.png" alt="Time-conditioned sampling results after epoch 5">
+        <figcaption>Epoch 5</figcaption>
+      </figure>
+      <figure>
+        <img src="images/partb/b2-time-conditioned-epoch10.png" alt="Time-conditioned sampling results after epoch 10">
+        <figcaption>Epoch 10</figcaption>
+      </figure>
+    </div>
+    <div class="figure-full">
+      <img src="images/partb/b2-time-conditioned-final.png" alt="Final time-conditioned sampling results after full training">
+      <figcaption>Final samples from the fully-trained time-conditioned model. Without class conditioning, the model has no way to control which digit it draws &mdash; just that it looks like a plausible one.</figcaption>
+    </div>
+
+    <h4>Adding Class-Conditioning to UNet</h4>
+    <p>Now, we want to complete a regular implementation of flow matching by also conditioning by class (number in this case). We're going to use a one-hot encoding 10-dimensional vector in this case, and put this through different linear layers. Now, we multiply our feature maps by this class conditioning, and add the time conditioning instead.</p>
+    <p>Recall that we will later want to use CFG on this U-Net, which means we need to train unconditional generation too. So, with probability \(p_{\text{dropout}}=0.1\), I'll be setting the class conditioning embedding to 0. Then, the model will learn both conditional and unconditional generation, and enable use to perform CFG.</p>
+
+    <h4>Training the UNet</h4>
+    <p>The training is very similar to the previous algorithm, except for creating this one-hot encoding vector and passing this into the model. Here's what my training loss curve looks like:</p>
+    <table class="hyperparam-table">
+      <tr><th>Batch size</th><td>64</td></tr>
+      <tr><th>Epochs</th><td>10</td></tr>
+      <tr><th>Hidden dim D</th><td>128</td></tr>
+      <tr><th>Optimizer</th><td>Adam</td></tr>
+      <tr><th>Initial learning rate</th><td>1e-2</td></tr>
+      <tr><th>LR scheduler</th><td>ExponentialLR, &gamma; = 0.1<sup>1/10</sup> &asymp; 0.794, stepped every epoch</td></tr>
+      <tr><th>Class dropout \(p_{\text{dropout}}\)</th><td>0.1</td></tr>
+    </table>
+    <div class="figure-full narrow">
+      <img src="images/partb/b3-class-conditioned-loss.png" alt="Class-conditioned flow matching training loss curve">
+      <figcaption>Class-conditioned FM training loss.</figcaption>
+    </div>
+
+    <h4>Sampling from the UNet</h4>
+    <p>For a good class conditioning, I'll be sampling using CFG, as we do in part A of this project. Here's the algorithm I used to generate these class-conditional samples:</p>
+    <figure class="algo-figure narrow">
+      <img src="images/partb/b3-algorithm-class-sampling.png" alt="Algorithm B2: sampling from class-conditioned UNet pseudocode">
+      <figcaption>Algorithm B2. Sampling from class-conditioned UNet</figcaption>
+    </figure>
+    <p>Note that in this case, we do \(v_{\text{CFG}}=v_{\text{uncond}} + \gamma(v_{\text{cond}} - v_{\text{uncond}})\) instead of starting with the conditional velocity. This turns out to be the same idea, just implemented slightly differently. In this case, a higher gamma means more conditional sampling, instead of more unconditional sampling. We choose \(\gamma=5\).</p>
+    <p>Now here's the results of training:</p>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/partb/b3-class-conditioned-epoch1.png" alt="Class-conditioned sampling results after epoch 1, digits 0-9">
+        <figcaption>Epoch 1</figcaption>
+      </figure>
+      <figure>
+        <img src="images/partb/b3-class-conditioned-epoch5.png" alt="Class-conditioned sampling results after epoch 5, digits 0-9">
+        <figcaption>Epoch 5</figcaption>
+      </figure>
+      <figure>
+        <img src="images/partb/b3-class-conditioned-epoch10.png" alt="Class-conditioned sampling results after epoch 10, digits 0-9">
+        <figcaption>Epoch 10</figcaption>
+      </figure>
+    </div>
+    <p>As you can see, class conditioning works quite well! The model creates highly accurate numbers compared to the solely time-conditioned U-Net. This is because class conditioning helps the model separate where on the manifold each number lies much more effectively than without conditioning, so the model converges faster.</p>
+
+    <h4>Simplifying Training</h4>
+    <p>As you can see in the above section, I implemented an exponential learning rate scheduler when training the U-Net. This improves the stability of training, but makes the training code more annoying. I want to get similar results without this, so I'll try and use a constant, smaller learning rate and try to get similar results. Here's my new training parameters, loss plot, and results:</p>
+    <table class="hyperparam-table">
+      <tr><th>Batch size</th><td>64</td></tr>
+      <tr><th>Epochs</th><td>10</td></tr>
+      <tr><th>Hidden dim D</th><td>128</td></tr>
+      <tr><th>Optimizer</th><td>Adam</td></tr>
+      <tr><th>Learning rate</th><td>1e-3 (constant, no scheduler)</td></tr>
+      <tr><th>Class dropout \(p_{\text{dropout}}\)</th><td>0.1</td></tr>
+    </table>
+    <div class="figure-full narrow">
+      <img src="images/partb/b4-class-conditioned-unsched-loss.png" alt="Class-conditioned flow matching training loss curve without an LR scheduler">
+      <figcaption>Class-conditioned FM training loss, constant \(1\mathrm{e}{-3}\) learning rate, no scheduler.</figcaption>
+    </div>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/partb/b4-class-conditioned-unsched-epoch1.png" alt="Unscheduled class-conditioned sampling results after epoch 1, digits 0-9">
+        <figcaption>Epoch 1</figcaption>
+      </figure>
+      <figure>
+        <img src="images/partb/b4-class-conditioned-unsched-epoch5.png" alt="Unscheduled class-conditioned sampling results after epoch 5, digits 0-9">
+        <figcaption>Epoch 5</figcaption>
+      </figure>
+      <figure>
+        <img src="images/partb/b4-class-conditioned-unsched-epoch10.png" alt="Unscheduled class-conditioned sampling results after epoch 10, digits 0-9">
+        <figcaption>Epoch 10</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <footer>
+    <p><a href="../index.html">&larr; Back to all projects</a></p>
+  </footer>
+</main>
+
+<script>
+  renderMathInElement(document.body, {
+    delimiters: [
+      {left: "\\[", right: "\\]", display: true},
+      {left: "\\(", right: "\\)", display: false}
+    ]
+  });
+</script>
