@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<title>Project 4: Auto-stitching and Photo Mosaics</title>
+<link rel="stylesheet" href="../style.css">
+
+<link rel="stylesheet" href="../vendor/katex/katex.min.css">
+<script src="../vendor/katex/katex.min.js"></script>
+<script src="../vendor/katex/auto-render.min.js"></script>
+
+<main>
+  <a class="back-link" href="../index.html">&larr; Back to all projects</a>
+
+  <h1>Project 4: Auto-stitching and Photo Mosaics</h1>
+  <p class="subtitle">By Sahir Tandon</p>
+
+  <section class="part prose" id="overview">
+    <h2>Overview</h2>
+    <p>In this project, I'll be stitching photographs together to create composite images, like your phone does to create panoramas. In the first part, I'll be doing this manually by defining correspondence sets, warping, and blending/compositing them together. In the second part, I'll be automating the correspondence point finding by using the RANSAC algorithm! This will let me make panoramas automatically without having to select my own correspondence sets beforehand.</p>
+  </section>
+
+  <section class="part prose" id="parta">
+    <h2>Part A: (Manually) Image Warping and Mosaicing</h2>
+
+    <h3 id="a1">1. Shooting the Pictures</h3>
+    <p>To make composite images, we first need some pictures! However, in this project, we don't be dealing with just any pictures; we need pictures with a projective transform between them. That is, we need to keep the COP (center of projection) of the camera fixed, or we won't be able to create accurate panoramas. To make these photos, I simply used my phone, but held the line where my camera is with my fingers while rotating the rest of the phone to get different perspectives.</p>
+    <p>The photos I'll be using in this part come from a side quest I made to Elmwood while procrastinating on doing the rest of this project. Enjoy!</p>
+
+    <div class="compare-grid">
+      <figure>
+        <img src="images/house2/1.jpg" alt="First of two source photos from the Elmwood side quest, used for the house mosaic">
+        <figcaption>House mosaic, image 1</figcaption>
+      </figure>
+      <figure>
+        <img src="images/house2/2.jpg" alt="Second of two source photos from the Elmwood side quest, used for the house mosaic">
+        <figcaption>House mosaic, image 2</figcaption>
+      </figure>
+    </div>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/theater1/2.jpg" alt="First of two source photos of a theater, used for the theater mosaic">
+        <figcaption>Theater mosaic, image 1</figcaption>
+      </figure>
+      <figure>
+        <img src="images/theater1/3.jpg" alt="Second of two source photos of a theater, used for the theater mosaic">
+        <figcaption>Theater mosaic, image 2</figcaption>
+      </figure>
+    </div>
+    <p>I'll be using these specific photos later on in the project as well.</p>
+
+    <h3 id="a2">2. Recovering Homographies</h3>
+    <p>Before we can warp, we need to mathematically define the relationship between the two images. In this case, these pictures are related by a homography; defined by the matrix-vector multiplication:</p>
+    <div class="equation">
+      <div class="eq-body">\[ \begin{bmatrix} u \\ v \\ \lambda \end{bmatrix} = \begin{bmatrix} h_1 & h_2 & h_3 \\ h_4 & h_5 & h_6 \\ h_7 & h_8 & 1 \end{bmatrix} \begin{bmatrix} x \\ y \\ 1 \end{bmatrix} \]</div>
+      <div class="eq-num">(1)</div>
+    </div>
+    <p>As you can see, this transformation has 8 unknowns, so we need 8 different equations to solve for the unique homography. In this case, we can rearrange the matrix-vector equations for each pair of inputs \((x,y)\) and outputs \((u,v)\) &mdash; we call this a correspondence set &mdash; to get 2 equations:</p>
+    <div class="equation">
+      <div class="eq-body">\[ u = xh_1 + yh_2 + h_3 - uxh_7 - uyh_8 \]</div>
+      <div class="eq-num">(2)</div>
+    </div>
+    <div class="equation">
+      <div class="eq-body">\[ v = xh_4 + yh_5 + h_6 - vxh_7 - vyh_8 \]</div>
+      <div class="eq-num">(3)</div>
+    </div>
+    <p>If we have at least 4 correspondence sets, then we can set up these \(2\times4=8\) equations to solve for our 8 unknowns. A more efficient way of doing this, which I implemented, is to represent this as another matrix-vector multiplication, with the values \(h_1\) through \(h_8\) being in a vector which we need to solve for. This, in fact, allows me to use more than 4 correspondence sets and find a least-squares solution. This gives me better results because picking correspondence sets is finicky: sometimes I might select a point a pixel or two (or five) away from the "true" point in the ideal transformation. If I pick more than 4 correspondence sets, these errors I make should cancel out enough in the least-squares solution to get a more robust transformation, and thus a more seamless panorama. In my homography calculations, I use 11 correspondence sets per image mosaic.</p>
+    <p>Below I visualize some correspondence sets, along with my least-squares setup and final homography matrix.</p>
+
+    <h4>Theater</h4>
+    <div class="figure-full">
+      <img src="images/theater1/correspondence.png" alt="Visualized correspondence points between the two theater source images">
+      <figcaption>Correspondence points selected between the two theater photos.</figcaption>
+    </div>
+    <div class="equation">
+      <div class="eq-body">\[ \scriptsize \begin{bmatrix} 106\\816\\359\\700\\471\\831\\687\\1056\\531\\718\\177\\357\\500\\423\\785\\664\\916\\484\\795\\871\\263\\563 \end{bmatrix} = \begin{bmatrix}
+662 & 798 & 1 & 0 & 0 & 0 & -70172 & -84588 \\
+0 & 0 & 0 & 662 & 798 & 1 & -540192 & -651168 \\
+800 & 709 & 1 & 0 & 0 & 0 & -287200 & -254531 \\
+0 & 0 & 0 & 800 & 709 & 1 & -560000 & -496300 \\
+873 & 815 & 1 & 0 & 0 & 0 & -411183 & -383865 \\
+0 & 0 & 0 & 873 & 815 & 1 & -725463 & -677265 \\
+1047 & 1030 & 1 & 0 & 0 & 0 & -719289 & -707610 \\
+0 & 0 & 0 & 1047 & 1030 & 1 & -1105632 & -1087680 \\
+916 & 721 & 1 & 0 & 0 & 0 & -486396 & -382851 \\
+0 & 0 & 0 & 916 & 721 & 1 & -657688 & -517678 \\
+695 & 461 & 1 & 0 & 0 & 0 & -123015 & -81597 \\
+0 & 0 & 0 & 695 & 461 & 1 & -248115 & -164577 \\
+894 & 472 & 1 & 0 & 0 & 0 & -447000 & -236000 \\
+0 & 0 & 0 & 894 & 472 & 1 & -378162 & -199656 \\
+1126 & 663 & 1 & 0 & 0 & 0 & -883910 & -520455 \\
+0 & 0 & 0 & 1126 & 663 & 1 & -747664 & -440232 \\
+1256 & 468 & 1 & 0 & 0 & 0 & -1150496 & -428688 \\
+0 & 0 & 0 & 1256 & 468 & 1 & -607904 & -226512 \\
+1133 & 864 & 1 & 0 & 0 & 0 & -900735 & -686880 \\
+0 & 0 & 0 & 1133 & 864 & 1 & -986843 & -752544 \\
+743 & 607 & 1 & 0 & 0 & 0 & -195409 & -159641 \\
+0 & 0 & 0 & 743 & 607 & 1 & -418309 & -341741
+\end{bmatrix} \begin{bmatrix} h_1\\h_2\\h_3\\h_4\\h_5\\h_6\\h_7\\h_8 \end{bmatrix} \]</div>
+    </div>
+    <p>Solving this least-squares system gives the homography matrix:</p>
+    <div class="equation">
+      <div class="eq-body">\[ H_{\text{Theater}} = \begin{bmatrix} 4.1229 & -0.0462 & -2476.18 \\ 1.1779 & 2.7821 & -1365.55 \\ 1.541\times10^{-3} & -2.511\times10^{-5} & 1 \end{bmatrix} \]</div>
+    </div>
+
+    <h4>House</h4>
+    <div class="figure-full">
+      <img src="images/house2/correspondence.png" alt="Visualized correspondence points between the two house source images">
+      <figcaption>Correspondence points selected between the two house photos.</figcaption>
+    </div>
+    <div class="equation">
+      <div class="eq-body">\[ \scriptsize \begin{bmatrix} 1500\\722\\997\\487\\1800\\829\\1236\\509\\1056\\195\\1697\\187\\985\\838\\1314\\865\\1273\\583\\1562\\438\\980\\953 \end{bmatrix} = \begin{bmatrix}
+666 & 740 & 1 & 0 & 0 & 0 & -999000 & -1110000 \\
+0 & 0 & 0 & 666 & 740 & 1 & -480852 & -534280 \\
+79 & 441 & 1 & 0 & 0 & 0 & -78763 & -439677 \\
+0 & 0 & 0 & 79 & 441 & 1 & -38473 & -214767 \\
+923 & 842 & 1 & 0 & 0 & 0 & -1661400 & -1515600 \\
+0 & 0 & 0 & 923 & 842 & 1 & -765167 & -698018 \\
+391 & 500 & 1 & 0 & 0 & 0 & -483276 & -618000 \\
+0 & 0 & 0 & 391 & 500 & 1 & -199019 & -254500 \\
+168 & 114 & 1 & 0 & 0 & 0 & -177408 & -120384 \\
+0 & 0 & 0 & 168 & 114 & 1 & -32760 & -22230 \\
+850 & 255 & 1 & 0 & 0 & 0 & -1442450 & -432735 \\
+0 & 0 & 0 & 850 & 255 & 1 & -158950 & -47685 \\
+48 & 864 & 1 & 0 & 0 & 0 & -47280 & -851040 \\
+0 & 0 & 0 & 48 & 864 & 1 & -40224 & -724032 \\
+469 & 883 & 1 & 0 & 0 & 0 & -616266 & -1160262 \\
+0 & 0 & 0 & 469 & 883 & 1 & -405685 & -763795 \\
+430 & 582 & 1 & 0 & 0 & 0 & -547390 & -740886 \\
+0 & 0 & 0 & 430 & 582 & 1 & -250690 & -339306 \\
+728 & 469 & 1 & 0 & 0 & 0 & -1137136 & -732578 \\
+0 & 0 & 0 & 728 & 469 & 1 & -318864 & -205422 \\
+36 & 1005 & 1 & 0 & 0 & 0 & -35280 & -984900 \\
+0 & 0 & 0 & 36 & 1005 & 1 & -34308 & -957765
+\end{bmatrix} \begin{bmatrix} h_1\\h_2\\h_3\\h_4\\h_5\\h_6\\h_7\\h_8 \end{bmatrix} \]</div>
+    </div>
+    <p>Solving this least-squares system gives the homography matrix:</p>
+    <div class="equation">
+      <div class="eq-body">\[ H_{\text{House}} = \begin{bmatrix} 0.3738 & 0.0270 & 935.40 \\ -0.2415 & 0.8211 & 133.56 \\ -3.052\times10^{-4} & 7.466\times10^{-6} & 1 \end{bmatrix} \]</div>
+    </div>
+
+    <h3 id="a3">3. Warping Images</h3>
+    <p>Now that we can compute homographies, we can go about warping images to other image planes! To prove this works, I'll first be rectifying some images: taking an off-angle picture of some object I know is rectangular (like a poster or sign), and then warping the image to make it look like I took the picture head-on.</p>
+    <p>To do this, I'll be implementing inverse warping: first, I'll find out all the pixels in the warped image plane that I need to find to reconstruct the image. Then, I'll take each pixel and find the inverse transformation to see where it lands on the original image plane. I'll interpolate to find the appropriate pixel value, then apply this pixel value to the respective warped pixel. This is better than the forward transform (where I take each pixel in the original image plane and apply it to the warped location) because I'll avoid having holes in the image &mdash; each pixel in the final warped image will definitely be accounted for.</p>
+    <p>For interpolation, I implemented 2 different methods: nearest-neighbor and bilinear. Nearest-neighbor interpolation simply takes the nearest pixel value to the inverse-warped location. It's easy and fast to do, but may look worse because of repeated pixel values. Bilinear interpolation takes a weighted average of the 4 neighboring pixel values, depending on how close the location is to each of the 4 pixels. It's slower and slightly harder to implement, but potentially looks better because there's smoother transitions between values. Here's a side-by-side comparison of how nearest-neighbor interpolation and bilinear interpolation looks:</p>
+
+    <div class="compare-grid align-center">
+      <figure>
+        <img src="images/rectify/tintin.jpg" alt="Original off-angle photo used for the rectification demo, before warping">
+        <figcaption>Original (unwarped)</figcaption>
+      </figure>
+      <figure>
+        <img src="images/rectify/nearest_neighbor.png" alt="Rectified result using nearest-neighbor interpolation">
+        <figcaption>Nearest-neighbor</figcaption>
+      </figure>
+      <figure>
+        <img src="images/rectify/bilinear.png" alt="Rectified result using bilinear interpolation">
+        <figcaption>Bilinear</figcaption>
+      </figure>
+    </div>
+    <p>As you can see, there's little visual difference between the two interpolation schemes: at this resolution, any visual differences are quite small and would lie solely on the pixel level, so they don't show many differences globally. In my profiling, the nearest neighbor interpolation took about 0.22 seconds warping, while bilinear interpolation took about 3 times as long (0.66 seconds). Because of the negligible visual difference, I'll be using nearest neighbor interpolation from here on out for the speed improvement.</p>
+    <p>Here's another one of my rectified images:</p>
+    <div class="single-figure large">
+      <img src="images/rectify/rectify_church.png" alt="Rectified image of a church facade, warped to appear as if shot head-on">
+      <figcaption>A rectified church facade.</figcaption>
+    </div>
+
+    <h3 id="a4">4. Blending the Images into a Mosaic</h3>
+    <p>Finally, let's create an image mosaic, or a panorama! I'll be doing this by projecting one image onto the other image plane, then blending the two.</p>
+    <p>You may be asking why I need to blend the images, if the overlap between the two should be registering the exact same scene. This is somewhat correct, but we need to account for 3 main things: potential small movements between camera positions (due to my shaking hands), edge artifacts from overlapping images, and automatic camera exposure changes between rotations. Blending the images will allow for a more natural look for the final panorama, as if the image truly is from one single shot.</p>
+    <p>My method for creating the mosaic was to set one image as the image plane, and then warp another image onto the first plane using the methodology from above. Then, I blended the two images together to form the final mosaic.</p>
+    <p>To blend the images, I'll be doing weighted averaging using distance transforms. The distance transform essentially provides a mask that tells you how far away you are from the center of one image versus another. By taking the distance transform of each image, then combining them and normalizing each weight to sum to 1, we can get a smooth transition between one image and another: as we get closer to one image, its pixel values take over and we see less and less specific details about the further image. This is simple, but works super well to get rid of small shifts, overlapping edge artifacts, and other visual effects that arise when the overlapping sections are close but not exactly the same.</p>
+    <p>Here's the final result of the image mosaics:</p>
+
+    <h4>Correspondence Points</h4>
+    <div class="figure-full">
+      <img src="images/bookstore1/correspondence.png" alt="Correspondence points between the two bookstore source images">
+      <figcaption>Bookstore</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/house2/correspondence.png" alt="Correspondence points between the two house source images">
+      <figcaption>House</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/theater1/correspondence.png" alt="Correspondence points between the two theater source images">
+      <figcaption>Theater</figcaption>
+    </div>
+
+    <h4>Final Mosaics</h4>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/bookstore1/mosaic.png" alt="Final blended mosaic of the two bookstore images">
+        <figcaption>Bookstore</figcaption>
+      </figure>
+      <figure>
+        <img src="images/house2/mosaic.png" alt="Final blended mosaic of the two house images">
+        <figcaption>House</figcaption>
+      </figure>
+      <figure>
+        <img src="images/theater1/mosaic.png" alt="Final blended mosaic of the two theater images">
+        <figcaption>Theater</figcaption>
+      </figure>
+    </div>
+
+    <p>You can see that the less overlap the images have, the more irregular the final mosaic shape becomes. That's because I'm projecting onto an image plane, which heavily distorts the edges away from the center of where the original image's lens is. If I projected onto a circle/sphere, this problem would be much less pronounced.</p>
+  </section>
+
+  <section class="part prose" id="partb">
+    <h2>Part B: Feature Matching for Autostitching</h2>
+    <p class="placeholder">Coming soon &mdash; automatic correspondence detection and RANSAC-based homography estimation.</p>
+  </section>
+
+  <footer>
+    <p><a href="../index.html">&larr; Back to all projects</a></p>
+  </footer>
+</main>
+
+<script>
+  renderMathInElement(document.body, {
+    delimiters: [
+      {left: "\\[", right: "\\]", display: true},
+      {left: "\\(", right: "\\)", display: false}
+    ]
+  });
+</script>

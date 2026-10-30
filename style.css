@@ -249,6 +249,10 @@ section.part:last-of-type {
   color: var(--muted);
 }
 
+.compare-grid.align-center {
+  align-items: center;
+}
+
 /* ---------- Result thumbnail gallery (image + per-item caption) ---------- */
 .gallery {
   display: flex;
@@ -488,6 +492,10 @@ footer {
   border-radius: 4px;
   border: 1px solid var(--border);
   display: inline-block;
+}
+
+.single-figure.large img {
+  width: 560px;
 }
 
 .single-figure figcaption {
