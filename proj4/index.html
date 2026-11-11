@@ -204,7 +204,125 @@
 
   <section class="part prose" id="partb">
     <h2>Part B: Feature Matching for Autostitching</h2>
-    <p class="placeholder">Coming soon &mdash; automatic correspondence detection and RANSAC-based homography estimation.</p>
+    <p>Manually selecting my own correspondences is kind of annoying. So, I'll now be implementing feature matching to automatically find these correspondence points, and also RANSAC to help find a good homography. Then, I can use the same warping code from before to get fully automatically-generated mosaics! For experimenting with the methodology, I'll be using the two images below:</p>
+
+    <div class="compare-grid">
+      <figure>
+        <img src="images/bookstore2/1.jpg" alt="First of two source photos of a bookstore interior, used to develop the autostitching pipeline">
+        <figcaption>Bookstore, image 1</figcaption>
+      </figure>
+      <figure>
+        <img src="images/bookstore2/2.jpg" alt="Second of two source photos of a bookstore interior, used to develop the autostitching pipeline">
+        <figcaption>Bookstore, image 2</figcaption>
+      </figure>
+    </div>
+
+    <h3 id="b1">1. Harris Corner Detection</h3>
+    <p>To identify what would be good correspondence points, we use Harris corners, which are defined as points in the image that have high gradients in both directions. If a pixel has high derivatives in only one direction, then it's an edge (as we showed before), so pixels with high derivatives in both directions must be corners! We can determine \(h(x,y)\), which is the "corner response" of each pixel.</p>
+    <p>Since we get a corner response for nearly every pixel, we need to tone down the number of corners that we actually care about. The typical way that this is done is by what's called maximal suppression, where we take the \((x,y)\) pairs with the highest \(h\). However, since high \(h\) values tend to cluster around higher-contrast areas of the image, we end up getting a bunch of clustered points. This clustering behavior is unideal since we want to calculate homographies (in which we would like spread out points for less noisy transformations).</p>
+    <p>I'll be getting around this using adaptive non-maximal suppression, or ANMS for short. First, I'll calculate the radius of each Harris point to the next strongest Harris point. In math terms, this is defined as so:</p>
+    <div class="equation">
+      <div class="eq-body">\[ r_i = \min_j \left\| \mathbf{x}_i - \mathbf{x}_j \right\|_2 \quad \text{s.t.} \quad h(\mathbf{x}_i) < c_{\text{robust}}\, h(\mathbf{x}_j) \]</div>
+      <div class="eq-num">(4)</div>
+    </div>
+    <p>Intuitively, this gives the spacing from any "important" Harris point to another "important" Harris point, where the important level is defined by the robustness factor, \(c_{\text{robust}}\). Then, we take the Harris points with the highest \(r_i\) to get our selected Harris points. In effect, this means that we'll be taking the important Harris points that are also spaced out well amongst the whole image.</p>
+    <p>Here's a comparison of what the largest 150 of these points look like. You can pretty easily see that ANMS gives a more even spread of good corners, which would potentially make good homographies.</p>
+    <div class="figure-full">
+      <img src="images/bookstore2/harris_corners.png" alt="Bookstore image with the top 150 Harris corners by plain maximal suppression (clustered) next to the top 150 by ANMS (evenly spread), plus a heatmap of Harris corner strength">
+      <figcaption>Left: top 150 corners by maximal suppression. Middle: top 150 corners by ANMS. Right: Harris corner strength.</figcaption>
+    </div>
+
+    <h3 id="b2">2. Feature Descriptor Extraction</h3>
+    <p>Now that we have Harris points, how do we compare the similarity between points in our different images? We'll use image features! The idea of image features is to look at a small area around each of the Harris points. In this case, I'll be doing something a little fancier: taking 8x8 patches by undersampling every 5 pixels, blurring the image beforehand to reduce aliasing, and normalizing the features to account for differences in bias and gain (mean and standard deviation). Here's what these image features look like for the above image:</p>
+    <div class="figure-full">
+      <img src="images/bookstore2/feature_1.png" alt="Zoomed-in image patch around a Harris corner next to its normalized 8x8 feature descriptor">
+      <figcaption>Feature 1</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/bookstore2/feature_8.png" alt="Zoomed-in image patch around a Harris corner next to its normalized 8x8 feature descriptor">
+      <figcaption>Feature 8</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/bookstore2/feature_20.png" alt="Zoomed-in image patch around a Harris corner next to its normalized 8x8 feature descriptor">
+      <figcaption>Feature 20</figcaption>
+    </div>
+
+    <h3 id="b3">3. Feature Matching</h3>
+    <p>Now that we have image features for each image, let's match them! The most obvious thing to do would be to find the nearest pixel-by-pixel neighbor of each feature, and match those, but this lets through a lot of incorrect matches. I'll be using Lowe's technique, which assumes that if two features are truly a match, then the second nearest neighbor would be far worse. So, I'll be finding the ratio of the distances between the 1st-nearest-neighbor and the 2nd-nearest-neighbor. This ratio works a lot better for differentiating between a proper match and a bad match. Depending on what worked empirically better for the final mosaic, I typically used a Lowe ratio between 0.3 and 0.5. Here's what a few matched features look like for the above image:</p>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/bookstore2/matched_feature_0.png" alt="Matched pair of image patches and feature descriptors from the two bookstore images, centered on a white book against a dark shelf divider">
+        <figcaption>Match 1</figcaption>
+      </figure>
+      <figure>
+        <img src="images/bookstore2/matched_feature_6.png" alt="Matched pair of image patches and feature descriptors from the two bookstore images, centered on the corner of a window frame">
+        <figcaption>Match 2</figcaption>
+      </figure>
+      <figure>
+        <img src="images/bookstore2/matched_feature_8.png" alt="Matched pair of image patches and feature descriptors from the two bookstore images, centered on a diagonal edge between dark and light surfaces">
+        <figcaption>Match 3</figcaption>
+      </figure>
+      <figure>
+        <img src="images/bookstore2/matched_feature_13.png" alt="Matched pair of image patches and feature descriptors from the two bookstore images, centered on a shelf edge between book spines">
+        <figcaption>Match 4</figcaption>
+      </figure>
+    </div>
+
+    <h3 id="b4">4. RANSAC for Robust Homographies</h3>
+    <p>To make good homographies, I'm going to be implementing the RANSAC (RANdom SAmple Consensus) algorithm! Here's a brief outline of the algorithm (for one iteration):</p>
+    <ol>
+      <li>Select 4 random matched Harris points.</li>
+      <li>Construct the homography matrix \(H\) defined by the 4 chosen points.</li>
+      <li>Using \(H\), transform all image 2 points into the image 1 space.</li>
+      <li>Find the distances between the transformed points and the true image 1 points.</li>
+      <li>Classify the number of inliers, defined as how many distances are within some threshold of the true image 1 points.</li>
+      <li>If this \(H\) gives more inliers than the previous best \(H\), then replace the previous \(H\) with the new \(H\).</li>
+    </ol>
+    <p>The idea of RANSAC is that if the homography is good, the homography would match up a lot of the chosen points well. By doing a number of iterations (I ended up going with 200), we can get a higher chance of getting a random set of 4 points that give us a good homography. For the above image, here's the final automatically-generated mosaics!</p>
+    <div class="figure-full">
+      <img src="images/bookstore2/mosaic_auto.png" alt="Automatically stitched mosaic of the two bookstore interior images">
+      <figcaption>Bookstore (automatic)</figcaption>
+    </div>
+    <div class="figure-full">
+      <img src="images/house1/mosaic_auto.png" alt="Automatically stitched mosaic of house photos">
+      <figcaption>House (automatic)</figcaption>
+    </div>
+
+    <p>I found that my algorithm typically worked well with between 10-30 matched points, and I was able to get about the same or better homographies on the mosaics from part A. Here's what they look like.</p>
+
+    <h4>Manual vs. Automatic Mosaics</h4>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/bookstore1/mosaic.png" alt="Bookstore mosaic stitched from manually selected correspondences">
+        <figcaption>Bookstore, manual</figcaption>
+      </figure>
+      <figure>
+        <img src="images/bookstore1/mosaic_auto.png" alt="Bookstore mosaic stitched automatically with feature matching and RANSAC">
+        <figcaption>Bookstore, automatic (18 matches, Lowe ratio 0.5)</figcaption>
+      </figure>
+    </div>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/house2/mosaic.png" alt="House mosaic stitched from manually selected correspondences">
+        <figcaption>House, manual</figcaption>
+      </figure>
+      <figure>
+        <img src="images/house2/mosaic_auto.png" alt="House mosaic stitched automatically with feature matching and RANSAC">
+        <figcaption>House, automatic (7 matches, Lowe ratio 0.5)</figcaption>
+      </figure>
+    </div>
+    <div class="compare-grid">
+      <figure>
+        <img src="images/theater1/mosaic.png" alt="Theater mosaic stitched from manually selected correspondences">
+        <figcaption>Theater, manual</figcaption>
+      </figure>
+      <figure>
+        <img src="images/theater1/mosaic_auto.png" alt="Theater mosaic stitched automatically with feature matching and RANSAC">
+        <figcaption>Theater, automatic (8 matches, Lowe ratio 0.3)</figcaption>
+      </figure>
+    </div>
+
+    <p>You can see that the mosaics overall work well for both! In the bookstore from part A, the automatically-generated mosaic actually did do better, while the theater did somewhat the same. The house seems to have a less aligned mosaic, though. My prediction for this is that the distortion coming from the rotation between the two images shifted the point features enough that there were few good matches. However, this is an isolated case, and in most situations, the automatically generated mosaic did at least as well.</p>
   </section>
 
   <footer>
